@@ -66,13 +66,20 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
     setState(() => _isLoading = true);
 
     // Request Storage Permission for viewing images
+    // Note: On Android 13+, 'photos' permission is preferred. 
+    // On older versions, 'storage' is used. The handler manages this automatically.
     var status = await [Permission.storage, Permission.photos].request();
 
     if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
       await _loadImagesFromStorage();
     } else {
       setState(() => _isLoading = false);
-      showTopNotification("Permission denied. Cannot load images.", isError: true);
+      
+      // Show notification that permission is needed
+      showTopNotification("Permission denied. Please enable storage permissions in Settings.", isError: true);
+
+      // Redirect to App Settings so the user can manually grant permissions
+      await openAppSettings();
     }
   }
 
@@ -246,7 +253,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
             ),
             child: Text(
               message,
-              style: const TextStyle(color: Colors.grey, fontSize: 14),
+              style: const TextStyle(color: Colors.grey, fontSize: 14), // Brighter grey text
               textAlign: TextAlign.center,
             ),
           ),
