@@ -1,0 +1,33 @@
+name: darkasa
+description: A new Flutter project.
+
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  permission_handler: ^11.3.1 # UPDATED VERSION
+  super_clipboard: ^0.9.1
+  pro_image_editor: ^12.4.5
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: "^0.13.1"
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: "launcher_icon" # This is the name that will appear in your AndroidManifest.xml
+  image_path: "assets/icon/icon.png" # Path to your high-res logo (1024x1024)
+  min_sdk_android: 21 # android min sdk min:16, default 21
