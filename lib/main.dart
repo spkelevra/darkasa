@@ -74,29 +74,18 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
   Future<void> _initApp() async {
     setState(() => _isLoading = true);
 
-    // Request "Manage All Files" permission for Android 10+
-    if (Platform.isAndroid) {
-      final status = await Permission.manageExternalStorage.request();
-      
-      if (status.isGranted) {
-        await _loadImagesFromStorage();
-      } else {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Permission denied. Cannot access storage.")),
-        );
-      }
+    // Request Storage Permission for viewing images
+    // Note: On Android 13+, 'photos' permission is preferred. 
+    // On older versions, 'storage' is used. The handler manages this automatically.
+    var status = await [Permission.storage, Permission.photos].request();
+
+    if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
+      await _loadImagesFromStorage();
     } else {
-      // For iOS or older Android, use standard permissions
-      var status = await [Permission.storage, Permission.photos].request();
-      if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
-        await _loadImagesFromStorage();
-      } else {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Permission denied. Cannot load images.")),
-        );
-      }
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Permission denied. Cannot load images.")),
+      );
     }
   }
 
@@ -105,12 +94,14 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
     try {
       List<String> allPaths = [];
 
+
       final directories = [
         '/storage/emulated/0/DCIM/Camera',
         '/storage/emulated/0/Pictures',
         '/storage/emulated/0/Download',
         '/storage/emulated/0/Pictures/Darkasa', // Include Darkasa folder in scan
       ];
+
 
       for (String dirPath in directories) {
         Directory dir = Directory(dirPath);
@@ -123,8 +114,10 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         }
       }
 
+
       // Sort by last modified date (newest first)
       allPaths.sort((a, b) => File(b).lastModifiedSync().compareTo(File(a).lastModifiedSync()));
+
 
       if (allPaths.isNotEmpty) {
         setState(() {
@@ -140,6 +133,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       } else {
         setState(() => _isLoading = false);
       }
+
 
     } catch (e) {
       print("Error loading images: $e");
@@ -228,21 +222,25 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         throw Exception("File not found");
       }
 
+
       // Read the image bytes
       List<int> imageBytesList = await file.readAsBytes();
       
       // Convert List<int> to Uint8List as required by super_clipboard
       final Uint8List imageBytes = Uint8List.fromList(imageBytesList);
 
+
       final clipboard = SystemClipboard.instance;
       if (clipboard == null) {
         throw Exception("Clipboard API not supported on this platform.");
       }
 
+
       final item = DataWriterItem();
       
       // Add the image data as PNG. 
       item.add(Formats.png(imageBytes));
+
 
       await clipboard.write([item]);
       
@@ -265,6 +263,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       );
     }
 
+
     if (_imagePaths == null || _imagePaths!.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('darkasa')),
@@ -274,8 +273,10 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       );
     }
 
+
     final currentImagePath = _imagePaths![_currentIndex];
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -312,7 +313,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                           const SnackBar(
                             content: Text("Image copied to clipboard!"),
                             duration: Duration(seconds: 1),
-                            backgroundColor: Colors.green,
+                            backgroundColor: Colors.black, // Changed to black
                           ),
                         );
                       }
@@ -330,6 +331,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
               },
             ),
           ),
+
 
           // --- UI ELEMENTS (Hidden in Fullscreen) ---
           if (!_isFullScreen) ...[
@@ -361,7 +363,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text("Image saved to Darkasa folder & copied!"),
-                          backgroundColor: Colors.green,
+                          backgroundColor: Colors.black, // Changed to black
                           duration: Duration(seconds: 2),
                         ),
                       );
@@ -370,7 +372,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                        ScaffoldMessenger.of(context).showSnackBar(
                          const SnackBar(
                            content: Text("Edited image copied to clipboard!"),
-                           backgroundColor: Colors.blue,
+                           backgroundColor: Colors.black, // Changed to black
                            duration: Duration(seconds: 2),
                          ),
                        );
@@ -379,6 +381,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                 ),
               ),
             ),
+
 
             // --- Bottom Strip & Controls Container ---
             Positioned(
@@ -415,7 +418,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                                   const SnackBar(
                                     content: Text("Image copied to clipboard!"),
                                     duration: Duration(seconds: 1),
-                                    backgroundColor: Colors.green,
+                                    backgroundColor: Colors.black, // Changed to black
                                   ),
                                 );
                               }
@@ -448,6 +451,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
               ),
             ),
 
+
             // --- Filename Label ---
             Positioned(
               bottom: 130 + bottomPadding, 
@@ -472,6 +476,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       ),
     );
   }
+
 
   @override
   void dispose() {
@@ -581,14 +586,8 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         final savePath = '${directory.path}/$fileName';
         final file = File(savePath);
         
-        // Simple retry logic in case of transient permission issues
-        try {
-          await file.writeAsBytes(bytes);
-        } catch (e) {
-          print("First save attempt failed, retrying...");
-          await Future.delayed(const Duration(milliseconds: 500));
-          await file.writeAsBytes(bytes);
-        }
+        // Direct write is now reliable with Manage All Files permission
+        await file.writeAsBytes(bytes);
         
         Navigator.pop(context, true); // Return true for disk save
       } else {
@@ -629,7 +628,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
                 SnackBar(
                   content: Text(_saveToDisk ? "Save to Folder Enabled" : "Save to Folder Disabled"),
                   duration: const Duration(seconds: 1),
-                  backgroundColor: _saveToDisk ? Colors.green : Colors.grey,
+                  backgroundColor: Colors.black, // Changed to black
                 ),
               );
             },
