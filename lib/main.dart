@@ -20,6 +20,15 @@ class DarkasaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
+        // Configure SnackBar globally to appear at the top and use bright grey text
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating, // Makes it float (allows top positioning logic in some contexts, but primarily styling)
+          backgroundColor: Color(0xFF2C2C2C), // Dark Grey background for contrast
+          contentTextStyle: TextStyle(color: Colors.white70), // Brighter Grey Text
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(8)),
+          ),
+        ),
       ),
       home: const FloatingImageViewer(),
     );
@@ -65,18 +74,20 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
   Future<void> _initApp() async {
     setState(() => _isLoading = true);
 
-    // Request Storage Permission for viewing images
-    // Note: On Android 13+, 'photos' permission is preferred. 
-    // On older versions, 'storage' is used. The handler manages this automatically.
-    var status = await [Permission.storage, Permission.photos].request();
+    // Request "Manage All Files" permission.
+    // On Android 11+, this redirects to Settings if not granted.
+    // On older Android, it requests standard storage permissions.
+    var status = await Permission.manageExternalStorage.request();
 
-    if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
+    print("DEBUG: Manage External Storage Status: $status");
+
+    if (status.isGranted) {
       await _loadImagesFromStorage();
     } else {
       setState(() => _isLoading = false);
       
       // Show notification that permission is needed
-      showTopNotification("Permission denied. Please enable storage permissions in Settings.", isError: true);
+      showTopNotification("Permission denied. Please enable 'All Files' access in Settings.", isError: true);
 
       // Redirect to App Settings so the user can manually grant permissions
       await openAppSettings();
@@ -96,11 +107,20 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
 
       for (String dirPath in directories) {
         Directory dir = Directory(dirPath);
-        if (await dir.exists()) {
-          await for (FileSystemEntity entity in dir.list(recursive: false)) {
-            if (entity is File && _isImageFile(entity.path)) {
-              allPaths.add(entity.path);
+        
+        // Check if directory exists and is accessible
+        bool exists = await dir.exists();
+        print("DEBUG: Dir $dirPath exists? $exists");
+        
+        if (exists) {
+          try {
+            await for (FileSystemEntity entity in dir.list(recursive: false)) {
+              if (entity is File && _isImageFile(entity.path)) {
+                allPaths.add(entity.path);
+              }
             }
+          } catch (e) {
+             print("DEBUG: Error listing $dirPath: $e");
           }
         }
       }
@@ -123,6 +143,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
           _scrollToCurrentIndex();
         });
       } else {
+        print("DEBUG: No images found in scanned directories.");
         setState(() => _isLoading = false);
       }
 
@@ -238,22 +259,31 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
   // Helper method to show notifications at the top
   void showTopNotification(String message, {bool isError = false}) {
     final overlay = Overlay.of(context);
+    
     final entry = OverlayEntry(
       builder: (context) => Positioned(
-        top: MediaQuery.of(context).padding.top + 10, // Below status bar
+        top: MediaQuery.of(context).padding.top + 16, // Below status bar
         left: 20,
         right: 20,
         child: Material(
           color: Colors.transparent,
+          elevation: 4.0,
+          borderRadius: BorderRadius.circular(8),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: isError ? Colors.red.withOpacity(0.8) : Colors.black.withOpacity(0.8),
+              // Use a slightly lighter dark grey for better contrast with white70 text
+              color: isError ? Colors.red.withOpacity(0.9) : const Color(0xFF333333), 
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white12, width: 1),
             ),
             child: Text(
               message,
-              style: const TextStyle(color: Colors.grey, fontSize: 14), // Brighter grey text
+              style: const TextStyle(
+                color: Colors.white70, // BRIGHTER GREY TEXT
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
@@ -265,7 +295,9 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
 
     // Remove after delay
     Future.delayed(const Duration(seconds: 2), () {
-      entry.remove();
+      if (entry.mounted) {
+        entry.remove();
+      }
     });
   }
 
@@ -329,7 +361,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                         fit: BoxFit.contain,
                         width: double.infinity,
                         height: double.infinity,
-                        key: ValueKey(path), // Added Key to force rebuild when path changes
+                        key: ValueKey(path), // CRITICAL: Forces rebuild when path/content changes
                       ),
                     ),
                   );
@@ -423,7 +455,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                                 padding: const EdgeInsets.all(2),
                                 child: Image.file(
                                   File(path),
-                                  key: ValueKey(path), // Added Key to force rebuild when path changes
+                                  key: ValueKey(path), // CRITICAL: Forces rebuild when path/content changes
                                   width: 80,
                                   height: 80,
                                   fit: BoxFit.cover,
@@ -582,10 +614,11 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
     } catch (e) {
       Navigator.pop(context, false);
       if (context.mounted) {
+        // This SnackBar will now appear at the TOP due to MaterialApp theme settings
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Failed to save: $e", style: const TextStyle(color: Colors.grey)), // Brighter Grey
-            backgroundColor: Colors.red,
+            content: Text("Failed to save: $e"), 
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -612,11 +645,11 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
                 _saveToDisk = !_saveToDisk;
               });
               
+              // This SnackBar will now appear at the TOP due to MaterialApp theme settings
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(_saveToDisk ? "Save to Folder Enabled" : "Save to Folder Disabled", style: const TextStyle(color: Colors.grey)), // Brighter Grey
+                  content: Text(_saveToDisk ? "Save to Folder Enabled" : "Save to Folder Disabled"),
                   duration: const Duration(seconds: 1),
-                  backgroundColor: Colors.black, 
                 ),
               );
             },
