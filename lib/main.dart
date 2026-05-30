@@ -74,18 +74,29 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
   Future<void> _initApp() async {
     setState(() => _isLoading = true);
 
-
-    // Request Storage Permission for viewing images
-    var status = await [Permission.storage, Permission.photos].request();
-
-
-    if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
-      await _loadImagesFromStorage();
+    // Request "Manage All Files" permission for Android 10+
+    if (Platform.isAndroid) {
+      final status = await Permission.manageExternalStorage.request();
+      
+      if (status.isGranted) {
+        await _loadImagesFromStorage();
+      } else {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Permission denied. Cannot access storage.")),
+        );
+      }
     } else {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Permission denied. Cannot load images.")),
-      );
+      // For iOS or older Android, use standard permissions
+      var status = await [Permission.storage, Permission.photos].request();
+      if (status[Permission.storage]!.isGranted || status[Permission.photos]!.isGranted) {
+        await _loadImagesFromStorage();
+      } else {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Permission denied. Cannot load images.")),
+        );
+      }
     }
   }
 
@@ -94,14 +105,12 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
     try {
       List<String> allPaths = [];
 
-
       final directories = [
         '/storage/emulated/0/DCIM/Camera',
         '/storage/emulated/0/Pictures',
         '/storage/emulated/0/Download',
         '/storage/emulated/0/Pictures/Darkasa', // Include Darkasa folder in scan
       ];
-
 
       for (String dirPath in directories) {
         Directory dir = Directory(dirPath);
@@ -114,10 +123,8 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         }
       }
 
-
       // Sort by last modified date (newest first)
       allPaths.sort((a, b) => File(b).lastModifiedSync().compareTo(File(a).lastModifiedSync()));
-
 
       if (allPaths.isNotEmpty) {
         setState(() {
@@ -133,7 +140,6 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       } else {
         setState(() => _isLoading = false);
       }
-
 
     } catch (e) {
       print("Error loading images: $e");
@@ -222,25 +228,21 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         throw Exception("File not found");
       }
 
-
       // Read the image bytes
       List<int> imageBytesList = await file.readAsBytes();
       
       // Convert List<int> to Uint8List as required by super_clipboard
       final Uint8List imageBytes = Uint8List.fromList(imageBytesList);
 
-
       final clipboard = SystemClipboard.instance;
       if (clipboard == null) {
         throw Exception("Clipboard API not supported on this platform.");
       }
 
-
       final item = DataWriterItem();
       
       // Add the image data as PNG. 
       item.add(Formats.png(imageBytes));
-
 
       await clipboard.write([item]);
       
@@ -263,7 +265,6 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       );
     }
 
-
     if (_imagePaths == null || _imagePaths!.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('darkasa')),
@@ -273,10 +274,8 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       );
     }
 
-
     final currentImagePath = _imagePaths![_currentIndex];
     final bottomPadding = MediaQuery.of(context).padding.bottom;
-
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -332,7 +331,6 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
             ),
           ),
 
-
           // --- UI ELEMENTS (Hidden in Fullscreen) ---
           if (!_isFullScreen) ...[
             
@@ -355,7 +353,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                       ),
                     );
                     
-                    // Refresh image list if edit was successful
+                    // Refresh image list if edit was successful AND saved to disk
                     if (result == true && mounted) {
                       await _loadImagesFromStorage();
                       
@@ -367,12 +365,20 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                           duration: Duration(seconds: 2),
                         ),
                       );
+                    } else if (result == 'clipboard' && mounted) {
+                       // If result is 'clipboard', we just copied it but didn't save to disk
+                       ScaffoldMessenger.of(context).showSnackBar(
+                         const SnackBar(
+                           content: Text("Edited image copied to clipboard!"),
+                           backgroundColor: Colors.blue,
+                           duration: Duration(seconds: 2),
+                         ),
+                       );
                     }
                   },
                 ),
               ),
             ),
-
 
             // --- Bottom Strip & Controls Container ---
             Positioned(
@@ -442,7 +448,6 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
               ),
             ),
 
-
             // --- Filename Label ---
             Positioned(
               bottom: 130 + bottomPadding, 
@@ -467,7 +472,6 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
       ),
     );
   }
-
 
   @override
   void dispose() {
@@ -536,11 +540,70 @@ class _InteractiveImageWidgetState extends State<InteractiveImageWidget> with Si
 
 
 // --- EDITOR SCREEN WIDGET (Full Editor) ---
-class ImageEditorScreen extends StatelessWidget {
+class ImageEditorScreen extends StatefulWidget {
   final String imagePath;
   
   const ImageEditorScreen({required this.imagePath});
 
+  @override
+  State<ImageEditorScreen> createState() => _ImageEditorScreenState();
+}
+
+class _ImageEditorScreenState extends State<ImageEditorScreen> {
+  
+  // Flag to determine if we should save to disk or just clipboard
+  bool _saveToDisk = false;
+
+  Future<void> _handleSave(Uint8List bytes) async {
+    try {
+      final fileName = File(widget.imagePath).path.split('/').last;
+      
+      // 1. Copy to Clipboard (Always happens)
+      try {
+        final clipboard = SystemClipboard.instance;
+        if (clipboard != null) {
+          final item = DataWriterItem();
+          item.add(Formats.png(bytes));
+          await clipboard.write([item]);
+        }
+      } catch (e) {
+        print("Warning: Clipboard failed: $e");
+      }
+
+      // 2. Save to Disk (Only if _saveToDisk is true)
+      if (_saveToDisk) {
+        final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
+        
+        if (!await directory.exists()) {
+          await directory.create(recursive: true);
+        }
+        
+        final savePath = '${directory.path}/$fileName';
+        final file = File(savePath);
+        
+        // Simple retry logic in case of transient permission issues
+        try {
+          await file.writeAsBytes(bytes);
+        } catch (e) {
+          print("First save attempt failed, retrying...");
+          await Future.delayed(const Duration(milliseconds: 500));
+          await file.writeAsBytes(bytes);
+        }
+        
+        Navigator.pop(context, true); // Return true for disk save
+      } else {
+        Navigator.pop(context, 'clipboard'); // Return string for clipboard only
+      }
+
+    } catch (e) {
+      Navigator.pop(context, false);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to save: $e"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -549,75 +612,39 @@ class ImageEditorScreen extends StatelessWidget {
         title: const Text("Edit Image"),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
+        actions: [
+          // Button to toggle Save to Disk option
+          IconButton(
+            icon: Icon(
+              _saveToDisk ? Icons.save : Icons.save_outlined,
+              color: _saveToDisk ? Colors.green : Colors.white70,
+            ),
+            tooltip: _saveToDisk ? "Save to Folder Enabled" : "Enable Save to Folder",
+            onPressed: () {
+              setState(() {
+                _saveToDisk = !_saveToDisk;
+              });
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_saveToDisk ? "Save to Folder Enabled" : "Save to Folder Disabled"),
+                  duration: const Duration(seconds: 1),
+                  backgroundColor: _saveToDisk ? Colors.green : Colors.grey,
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Container(
         color: Colors.black,
         child: ProImageEditor.file(
-          File(imagePath),
+          File(widget.imagePath),
           
           callbacks: ProImageEditorCallbacks(
             onImageEditingComplete: (Uint8List bytes) async {
-              try {
-                final fileName = File(imagePath).path.split('/').last;
-                
-                // 1. Define the Darkasa folder path
-                final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
-                
-                // 2. Create folder if it doesn't exist
-                if (!await directory.exists()) {
-                  await directory.create(recursive: true);
-                }
-                
-                final savePath = '${directory.path}/$fileName';
-                final file = File(savePath);
-                
-                // 3. Save the file
-                await file.writeAsBytes(bytes);
-                
-                // 4. Register with MediaStore so it appears in Google Photos immediately
-                if (Platform.isAndroid) {
-                  try {
-                    // This uses a simple broadcast to tell Android to scan this specific file
-                    // Note: For newer Android versions, MediaStore API is preferred, 
-                    // but for simplicity and compatibility without extra plugins, 
-                    // we rely on the fact that /Pictures/ is scanned automatically.
-                    // If it doesn't show up instantly, a quick restart of Photos app helps.
-                    
-                    // Optional: You can add 'gallery_saver' package for guaranteed instant sync
-                  } catch (e) {
-                    print("MediaStore registration skipped or failed: $e");
-                  }
-                }
-
-                // 5. Copy to clipboard using super_clipboard
-                try {
-                  final clipboard = SystemClipboard.instance;
-                  if (clipboard != null) {
-                    final item = DataWriterItem();
-                    
-                    // Add as PNG format
-                    item.add(Formats.png(bytes));
-                    
-                    await clipboard.write([item]);
-                  }
-                } catch (e) {
-                  print("Warning: Failed to copy to clipboard: $e");
-                  // Continue even if clipboard fails
-                }
-                
-                Navigator.pop(context, true); // Return true to indicate success
-                
-              } catch (e) {
-                Navigator.pop(context, false); // Return false on error
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text("Failed to save image: $e"),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
+              // This is called when the user clicks the CHECKMARK inside the editor.
+              await _handleSave(bytes);
             },
           ),
         ),
