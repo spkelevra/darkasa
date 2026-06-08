@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For System UI control
+import 'package:flutter/services.dart'; // For System UI control and MethodChannel
 import 'package:permission_handler/permission_handler.dart';
-import 'package:super_clipboard/super_clipboard.dart'; // For clipboard image support
+import 'package:super_clipboard/super_clipboard.dart'; // For clipboard image support (write only)
 import 'package:pro_image_editor/pro_image_editor.dart'; // Image Editor Package
-import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data'; // Required for Uint8List
 
@@ -258,102 +258,64 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
   }
 
   /// Pastes an image from the system clipboard and saves it to the Darkasa folder.
+  /// Uses a native platform channel on Android to avoid super_clipboard read crashes.
+  static const MethodChannel _clipboardChannel =
+      MethodChannel('com.example.darkasa/clipboard_image');
+
   Future<void> _pasteImageFromClipboard() async {
     try {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
-        showTopNotification("Clipboard API not supported on this device.", isError: true);
-        return;
+      if (Platform.isAndroid) {
+        // Use native platform channel — avoids super_clipboard crash on read
+        final dynamic clipResult = await _clipboardChannel.invokeMethod('getImageFromClipboard');
+
+        if (clipResult == null) {
+          showTopNotification("No image found in clipboard. Copy an image first, then try again.", isError: true);
+          return;
+        }
+
+        final data = clipResult['data'] as String;
+        final extension = clipResult['extension'] as String? ?? 'png';
+
+        if (data.isEmpty) {
+          showTopNotification("No image found in clipboard. Copy an image first, then try again.", isError: true);
+          return;
+        }
+
+        // Decode base64 to bytes
+        final imageBytes = base64Decode(data);
+
+        // Generate a timestamped filename
+        final now = DateTime.now();
+        final timestamp = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+        final fileName = 'pasted_${timestamp}.$extension';
+
+        // Ensure the Darkasa directory exists
+        final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
+        if (!await directory.exists()) {
+          await directory.create(recursive: true);
+        }
+
+        // Save the file
+        final savePath = '${directory.path}/$fileName';
+        final file = File(savePath);
+        await file.writeAsBytes(imageBytes);
+
+        // Refresh the image list to show the new image
+        await _loadImagesFromStorage();
+
+        if (mounted) {
+          showTopNotification("Image saved as $fileName");
+        }
+
+      } else {
+        showTopNotification("Paste from clipboard is only available on Android.", isError: true);
       }
 
-      final reader = await clipboard.read();
-      if (reader.items.isEmpty) {
-        showTopNotification("No data found in clipboard.", isError: true);
-        return;
-      }
-
-      // Try to find an image in the clipboard, checking multiple formats.
-      // getFile() uses a callback pattern — wrap it with Completer so we can await.
-      final imageFormats = [
-        (Formats.png, 'png'),
-        (Formats.jpeg, 'jpg'),
-        (Formats.gif, 'gif'),
-        (Formats.webp, 'webp'),
-        (Formats.bmp, 'bmp'),
-      ];
-
-      Uint8List? imageBytes;
-      String extension = 'png';
-
-      for (final entry in imageFormats) {
-        final format = entry.$1;
-        final ext = entry.$2;
-
-        if (!reader.canProvide(format)) continue;
-
-        // Wrap the callback-based getFile() into an awaitable Future
-        final completer = Completer<void>();
-        reader.getFile(
-          format,
-          (DataReaderFile file) async {
-            try {
-              imageBytes = await file.readAll();
-              extension = ext;
-            } catch (e) {
-              print("Error reading clipboard file: $e");
-            } finally {
-              if (!completer.isCompleted) completer.complete();
-            }
-          },
-          onError: (error) {
-            print("Clipboard getFile error: $error");
-            if (!completer.isCompleted) completer.completeError(error);
-          },
-        );
-
-        // Wait for the callback to fire with a timeout
-        await completer.future.timeout(
-          const Duration(seconds: 5),
-          onTimeout: () {
-            print("Clipboard read timed out for format $ext");
-            throw TimeoutException('Clipboard read timed out');
-          },
-        );
-
-        if (imageBytes != null && imageBytes!.isNotEmpty) break;
-      }
-
-      if (imageBytes == null || imageBytes!.isEmpty) {
-        // Debug: log available formats to help diagnose
-        final allFormats = reader.getFormats(Formats.standardFormats);
-        print("Available clipboard formats: ${allFormats.map((f) => f.toString()).join(', ')}");
-        showTopNotification("No image found in clipboard. Copy an image first, then try again.", isError: true);
-        return;
-      }
-
-      // Generate a timestamped filename
-      final now = DateTime.now();
-      final timestamp = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-      final fileName = 'pasted_${timestamp}.$extension';
-
-      // Ensure the Darkasa directory exists
-      final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
-
-      // Save the file
-      final savePath = '${directory.path}/$fileName';
-      final file = File(savePath);
-      await file.writeAsBytes(imageBytes!);
-
-      // Refresh the image list to show the new image
-      await _loadImagesFromStorage();
-
+    } on PlatformException catch (e) {
+      print("Clipboard platform error: ${e.message}");
       if (mounted) {
-        showTopNotification("Image saved as $fileName");
+        showTopNotification("Failed to read clipboard: ${e.message}", isError: true);
       }
-
     } catch (e) {
       print("Error pasting from clipboard: $e");
       if (mounted) {
