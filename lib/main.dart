@@ -485,11 +485,12 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                         
                         // Refresh image list if edit was successful AND saved to disk
                         if (result == true && mounted) {
-                          // Force a refresh of the image list
-                          await _loadImagesFromStorage();
-                          
-                          // Show success message at top
-                          showTopNotification("Image saved to Darkasa folder & copied!");
+                          // Brief delay ensures the file is fully flushed before rescanning
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          if (mounted) {
+                            await _loadImagesFromStorage();
+                            showTopNotification("Image saved to Darkasa folder & copied!");
+                          }
                         } else if (result == 'clipboard' && mounted) {
                            // If result is 'clipboard', we just copied it but didn't save to disk
                            showTopNotification("Edited image copied to clipboard!");
@@ -501,8 +502,9 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                       icon: const Icon(Icons.refresh, color: Colors.white, size: 24),
                       tooltip: 'Refresh',
                       onPressed: () async {
-                        await _loadImagesFromStorage();
+                        await Future.delayed(const Duration(milliseconds: 300));
                         if (mounted) {
+                          await _loadImagesFromStorage();
                           showTopNotification("Image list refreshed");
                         }
                       },
@@ -690,8 +692,6 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
 
   Future<void> _handleSave(Uint8List bytes) async {
     try {
-      final fileName = File(widget.imagePath).path.split('/').last;
-      
       // 1. Copy to Clipboard (Always happens)
       try {
         final clipboard = SystemClipboard.instance;
@@ -704,17 +704,32 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         print("Warning: Clipboard failed: $e");
       }
 
-      // 2. Save to Disk (Only if _saveToDisk is true)
+      // 2. Save to Disk (Only if _saveToDisk is true) — creates a copy, never overwrites
       if (_saveToDisk) {
         final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
-        
+
         if (!await directory.exists()) {
           await directory.create(recursive: true);
         }
-        
-        final savePath = '${directory.path}/$fileName';
+
+        // Build a new filename so the original is preserved
+        final origFile = File(widget.imagePath);
+        final origName = origFile.path.split('/').last;
+        final extIndex = origName.lastIndexOf('.');
+        final nameWithoutExt = extIndex >= 0 ? origName.substring(0, extIndex) : origName;
+        final extension = extIndex >= 0 ? origName.substring(extIndex + 1) : 'png';
+
+        final timestamp = DateTime.now();
+        final tsStr = '${timestamp.year}${timestamp.month.toString().padLeft(2, '0')}'
+            '${timestamp.day.toString().padLeft(2, '0')}_';
+        final timeStr = '${timestamp.hour.toString().padLeft(2, '0')}'
+            '${timestamp.minute.toString().padLeft(2, '0')}'
+            '${timestamp.second.toString().padLeft(2, '0')}';
+        final newFileName = '${nameWithoutExt}_edited_${tsStr}$timeStr.$extension';
+
+        final savePath = '${directory.path}/$newFileName';
         final file = File(savePath);
-        
+
         // Direct write is now reliable with Manage All Files permission
         await file.writeAsBytes(bytes);
 
