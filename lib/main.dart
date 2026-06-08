@@ -11,6 +11,20 @@ void main() {
   runApp(const DarkasaApp());
 }
 
+/// Top-level: Notifies Android's MediaScanner so Gallery/Photos picks up saved files.
+const MethodChannel _mediaScannerChannel =
+    MethodChannel('com.example.darkasa/media_scanner');
+
+Future<void> scanFileForMediaStore(String filePath) async {
+  try {
+    if (Platform.isAndroid) {
+      await _mediaScannerChannel.invokeMethod('scanFile', {'path': filePath});
+    }
+  } catch (e) {
+    print("Warning: Media scan failed for $filePath: $e");
+  }
+}
+
 class DarkasaApp extends StatelessWidget {
   const DarkasaApp({super.key});
 
@@ -299,6 +313,9 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         final savePath = '${directory.path}/$fileName';
         final file = File(savePath);
         await file.writeAsBytes(imageBytes);
+
+        // Notify MediaScanner so Gallery/Photos picks up the new image
+        await scanFileForMediaStore(savePath);
 
         // Refresh the image list to show the new image
         await _loadImagesFromStorage();
@@ -700,7 +717,10 @@ class _ImageEditorScreenState extends State<ImageEditorScreen> {
         
         // Direct write is now reliable with Manage All Files permission
         await file.writeAsBytes(bytes);
-        
+
+        // Notify MediaScanner so Gallery/Photos picks up the saved image
+        await scanFileForMediaStore(savePath);
+
         Navigator.pop(context, true); // Return true for disk save
       } else {
         Navigator.pop(context, 'clipboard'); // Return string for clipboard only

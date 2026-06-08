@@ -1,7 +1,9 @@
 package com.example.darkasa
 
 import android.content.ClipDescription
+import android.content.Intent
 import android.graphics.Bitmap
+import android.media.MediaScannerConnection
 import android.net.Uri
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -13,10 +15,12 @@ import java.io.InputStream
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.darkasa/clipboard_image"
+    private val MEDIA_CHANNEL = "com.example.darkasa/media_scanner"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Clipboard image channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getImageFromClipboard" -> {
@@ -95,6 +99,32 @@ class MainActivity : FlutterActivity() {
 
                     } catch (e: Exception) {
                         result.error("CLIPBOARD_ERROR", e.message, null)
+                    }
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+
+        // Media scanner channel - notifies Gallery/Photos of new files
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "scanFile" -> {
+                    val filePath = call.argument<String>("path")
+                    if (filePath != null) {
+                        MediaScannerConnection.scanFile(
+                            this,
+                            arrayOf(filePath),
+                            null,
+                            object : MediaScannerConnection.OnScanCompletedListener {
+                                override fun onScanCompleted(path: String?, uri: Uri?) {
+                                    result.success(true)
+                                }
+                            }
+                        )
+                    } else {
+                        result.error("INVALID_PATH", "No file path provided", null)
                     }
                 }
                 else -> {
