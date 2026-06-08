@@ -3,6 +3,7 @@ import 'package:flutter/services.dart'; // For System UI control
 import 'package:permission_handler/permission_handler.dart';
 import 'package:super_clipboard/super_clipboard.dart'; // For clipboard image support
 import 'package:pro_image_editor/pro_image_editor.dart'; // Image Editor Package
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data'; // Required for Uint8List
 
@@ -271,45 +272,61 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
         return;
       }
 
-      // Try to find an image in the clipboard, checking multiple formats
+      // Try to find an image in the clipboard, checking multiple formats.
+      // getFile() uses a callback pattern — wrap it with Completer so we can await.
       final imageFormats = [
-        Formats.png,
-        Formats.jpeg,
-        Formats.gif,
-        Formats.webp,
-        Formats.bmp,
+        (Formats.png, 'png'),
+        (Formats.jpeg, 'jpg'),
+        (Formats.gif, 'gif'),
+        (Formats.webp, 'webp'),
+        (Formats.bmp, 'bmp'),
       ];
 
       Uint8List? imageBytes;
       String extension = 'png';
 
-      for (final format in imageFormats) {
-        if (reader.canProvide(format)) {
-          final progress = reader.getFile(
-            format,
-            (DataReaderFile file) async {
+      for (final entry in imageFormats) {
+        final format = entry.$1;
+        final ext = entry.$2;
+
+        if (!reader.canProvide(format)) continue;
+
+        // Wrap the callback-based getFile() into an awaitable Future
+        final completer = Completer<void>();
+        reader.getFile(
+          format,
+          (DataReaderFile file) async {
+            try {
               imageBytes = await file.readAll();
-            },
-          );
-          if (progress != null) {
-            // Determine extension from the format we matched
-            if (format == Formats.jpeg) {
-              extension = 'jpg';
-            } else if (format == Formats.gif) {
-              extension = 'gif';
-            } else if (format == Formats.webp) {
-              extension = 'webp';
-            } else if (format == Formats.bmp) {
-              extension = 'bmp';
-            } else {
-              extension = 'png';
+              extension = ext;
+            } catch (e) {
+              print("Error reading clipboard file: $e");
+            } finally {
+              if (!completer.isCompleted) completer.complete();
             }
-            break;
-          }
-        }
+          },
+          onError: (error) {
+            print("Clipboard getFile error: $error");
+            if (!completer.isCompleted) completer.completeError(error);
+          },
+        );
+
+        // Wait for the callback to fire with a timeout
+        await completer.future.timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            print("Clipboard read timed out for format $ext");
+            throw TimeoutException('Clipboard read timed out');
+          },
+        );
+
+        if (imageBytes != null && imageBytes!.isNotEmpty) break;
       }
 
       if (imageBytes == null || imageBytes!.isEmpty) {
+        // Debug: log available formats to help diagnose
+        final allFormats = reader.getFormats(Formats.standardFormats);
+        print("Available clipboard formats: ${allFormats.map((f) => f.toString()).join(', ')}");
         showTopNotification("No image found in clipboard. Copy an image first, then try again.", isError: true);
         return;
       }
