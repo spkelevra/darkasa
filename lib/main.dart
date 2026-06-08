@@ -256,6 +256,95 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
     }
   }
 
+  /// Pastes an image from the system clipboard and saves it to the Darkasa folder.
+  Future<void> _pasteImageFromClipboard() async {
+    try {
+      final clipboard = SystemClipboard.instance;
+      if (clipboard == null) {
+        showTopNotification("Clipboard API not supported on this device.", isError: true);
+        return;
+      }
+
+      final reader = await clipboard.read();
+      if (reader.items.isEmpty) {
+        showTopNotification("No data found in clipboard.", isError: true);
+        return;
+      }
+
+      // Try to find an image in the clipboard, checking multiple formats
+      final imageFormats = [
+        Formats.png,
+        Formats.jpeg,
+        Formats.gif,
+        Formats.webp,
+        Formats.bmp,
+      ];
+
+      Uint8List? imageBytes;
+      String extension = 'png';
+
+      for (final format in imageFormats) {
+        if (reader.canProvide(format)) {
+          final progress = reader.getFile(
+            format,
+            (DataReaderFile file) async {
+              imageBytes = await file.readAll();
+            },
+          );
+          if (progress != null) {
+            // Determine extension from the format we matched
+            if (format == Formats.jpeg) {
+              extension = 'jpg';
+            } else if (format == Formats.gif) {
+              extension = 'gif';
+            } else if (format == Formats.webp) {
+              extension = 'webp';
+            } else if (format == Formats.bmp) {
+              extension = 'bmp';
+            } else {
+              extension = 'png';
+            }
+            break;
+          }
+        }
+      }
+
+      if (imageBytes == null || imageBytes!.isEmpty) {
+        showTopNotification("No image found in clipboard. Copy an image first, then try again.", isError: true);
+        return;
+      }
+
+      // Generate a timestamped filename
+      final now = DateTime.now();
+      final timestamp = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+      final fileName = 'pasted_${timestamp}.$extension';
+
+      // Ensure the Darkasa directory exists
+      final directory = Directory('/storage/emulated/0/Pictures/Darkasa');
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      // Save the file
+      final savePath = '${directory.path}/$fileName';
+      final file = File(savePath);
+      await file.writeAsBytes(imageBytes!);
+
+      // Refresh the image list to show the new image
+      await _loadImagesFromStorage();
+
+      if (mounted) {
+        showTopNotification("Image saved as $fileName");
+      }
+
+    } catch (e) {
+      print("Error pasting from clipboard: $e");
+      if (mounted) {
+        showTopNotification("Failed to paste image: ${e.toString()}", isError: true);
+      }
+    }
+  }
+
   // Helper method to show notifications at the top
   void showTopNotification(String message, {bool isError = false}) {
     final overlay = Overlay.of(context);
@@ -373,7 +462,7 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
           // --- UI ELEMENTS (Hidden in Fullscreen) ---
           if (!_isFullScreen) ...[
             
-            // --- EDIT BUTTON (Left side, above bottom bar) ---
+            // --- ACTION BUTTONS ROW (Edit, Refresh, Paste) ---
             Positioned(
               bottom: 130 + bottomPadding, 
               left: 20,
@@ -382,28 +471,55 @@ class _FloatingImageViewerState extends State<FloatingImageViewer> with TickerPr
                   color: Colors.black.withOpacity(0.6),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.white, size: 24),
-                  onPressed: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ImageEditorScreen(imagePath: currentImagePath),
-                      ),
-                    );
-                    
-                    // Refresh image list if edit was successful AND saved to disk
-                    if (result == true && mounted) {
-                      // Force a refresh of the image list
-                      await _loadImagesFromStorage();
-                      
-                      // Show success message at top
-                      showTopNotification("Image saved to Darkasa folder & copied!");
-                    } else if (result == 'clipboard' && mounted) {
-                       // If result is 'clipboard', we just copied it but didn't save to disk
-                       showTopNotification("Edited image copied to clipboard!");
-                    }
-                  },
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Edit button
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.white, size: 24),
+                      tooltip: 'Edit',
+                      onPressed: () async {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ImageEditorScreen(imagePath: currentImagePath),
+                          ),
+                        );
+                        
+                        // Refresh image list if edit was successful AND saved to disk
+                        if (result == true && mounted) {
+                          // Force a refresh of the image list
+                          await _loadImagesFromStorage();
+                          
+                          // Show success message at top
+                          showTopNotification("Image saved to Darkasa folder & copied!");
+                        } else if (result == 'clipboard' && mounted) {
+                           // If result is 'clipboard', we just copied it but didn't save to disk
+                           showTopNotification("Edited image copied to clipboard!");
+                        }
+                      },
+                    ),
+                    // Refresh button
+                    IconButton(
+                      icon: const Icon(Icons.refresh, color: Colors.white, size: 24),
+                      tooltip: 'Refresh',
+                      onPressed: () async {
+                        await _loadImagesFromStorage();
+                        if (mounted) {
+                          showTopNotification("Image list refreshed");
+                        }
+                      },
+                    ),
+                    // Paste from clipboard button
+                    IconButton(
+                      icon: const Icon(Icons.paste, color: Colors.white, size: 24),
+                      tooltip: 'Paste & Save',
+                      onPressed: () async {
+                        await _pasteImageFromClipboard();
+                      },
+                    ),
+                  ],
                 ),
               ),
             ),
